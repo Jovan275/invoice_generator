@@ -327,6 +327,10 @@ $$;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
+
+-- This function should only ever run via the auth trigger above, never as an
+-- RPC. Revoke execute from client/API roles so it cannot be called directly.
+revoke execute on function public.handle_new_user() from public, anon, authenticated;
 ```
 
 ### 6.2 `updated_at` maintenance
@@ -335,6 +339,7 @@ create trigger on_auth_user_created
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
+set search_path = public
 as $$
 begin
   new.updated_at = now();
@@ -355,6 +360,11 @@ create trigger invoices_set_updated_at
   for each row execute function public.set_updated_at();
 ```
 
+> **Hardening note:** `set search_path = public` pins the function's schema
+> resolution so it cannot be hijacked by a mutable `search_path` (Supabase
+> advisor `function_search_path_mutable`). This keeps it consistent with the
+> other functions in this doc.
+
 ---
 
 ## 7. Row-Level Security (RLS)
@@ -363,6 +373,13 @@ Enable RLS on every application table and scope all access to the authenticated
 user. `profiles` is keyed by `id = auth.uid()`; `clients` and `invoices` by
 `user_id = auth.uid()`; `invoice_items` are reached through their parent
 invoice's ownership.
+
+> **RLS performance note (`auth_rls_initplan`):** all policies call the auth
+> function as `(select auth.uid())` rather than a bare `auth.uid()`. Wrapping it
+> in a scalar subquery lets Postgres evaluate it **once per query** (as an
+> InitPlan) instead of **once per row**, which is the Supabase-recommended
+> pattern and avoids a large performance hit on big tables. See
+> [Call functions with `select`](https://supabase.com/docs/guides/database/postgres/row-level-security#call-functions-with-select).
 
 ```sql
 alter table public.profiles      enable row level security;
@@ -375,13 +392,13 @@ alter table public.invoice_items enable row level security;
 
 ```sql
 create policy profiles_select_own on public.profiles
-  for select using (id = auth.uid());
+  for select using (id = (select auth.uid()));
 
 create policy profiles_insert_own on public.profiles
-  for insert with check (id = auth.uid());
+  for insert with check (id = (select auth.uid()));
 
 create policy profiles_update_own on public.profiles
-  for update using (id = auth.uid()) with check (id = auth.uid());
+  for update using (id = (select auth.uid())) with check (id = (select auth.uid()));
 
 -- No delete policy: profiles are removed via auth.users cascade.
 ```
@@ -390,32 +407,32 @@ create policy profiles_update_own on public.profiles
 
 ```sql
 create policy clients_select_own on public.clients
-  for select using (user_id = auth.uid());
+  for select using (user_id = (select auth.uid()));
 
 create policy clients_insert_own on public.clients
-  for insert with check (user_id = auth.uid());
+  for insert with check (user_id = (select auth.uid()));
 
 create policy clients_update_own on public.clients
-  for update using (user_id = auth.uid()) with check (user_id = auth.uid());
+  for update using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
 
 create policy clients_delete_own on public.clients
-  for delete using (user_id = auth.uid());
+  for delete using (user_id = (select auth.uid()));
 ```
 
 ### 7.3 `invoices`
 
 ```sql
 create policy invoices_select_own on public.invoices
-  for select using (user_id = auth.uid());
+  for select using (user_id = (select auth.uid()));
 
 create policy invoices_insert_own on public.invoices
-  for insert with check (user_id = auth.uid());
+  for insert with check (user_id = (select auth.uid()));
 
 create policy invoices_update_own on public.invoices
-  for update using (user_id = auth.uid()) with check (user_id = auth.uid());
+  for update using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
 
 create policy invoices_delete_own on public.invoices
-  for delete using (user_id = auth.uid());
+  for delete using (user_id = (select auth.uid()));
 ```
 
 > **Lifecycle note (enforced in application / optional trigger):** invoices may
@@ -431,7 +448,7 @@ create policy invoice_items_select_own on public.invoice_items
     exists (
       select 1 from public.invoices i
       where i.id = invoice_items.invoice_id
-        and i.user_id = auth.uid()
+        and i.user_id = (select auth.uid())
     )
   );
 
@@ -440,7 +457,7 @@ create policy invoice_items_insert_own on public.invoice_items
     exists (
       select 1 from public.invoices i
       where i.id = invoice_items.invoice_id
-        and i.user_id = auth.uid()
+        and i.user_id = (select auth.uid())
     )
   );
 
@@ -449,13 +466,13 @@ create policy invoice_items_update_own on public.invoice_items
     exists (
       select 1 from public.invoices i
       where i.id = invoice_items.invoice_id
-        and i.user_id = auth.uid()
+        and i.user_id = (select auth.uid())
     )
   ) with check (
     exists (
       select 1 from public.invoices i
       where i.id = invoice_items.invoice_id
-        and i.user_id = auth.uid()
+        and i.user_id = (select auth.uid())
     )
   );
 
@@ -464,7 +481,7 @@ create policy invoice_items_delete_own on public.invoice_items
     exists (
       select 1 from public.invoices i
       where i.id = invoice_items.invoice_id
-        and i.user_id = auth.uid()
+        and i.user_id = (select auth.uid())
     )
   );
 ```
@@ -488,30 +505,34 @@ on conflict (id) do nothing;
 create policy invoices_storage_select_own on storage.objects
   for select using (
     bucket_id = 'invoices'
-    and (storage.foldername(name))[1] = auth.uid()::text
+    and (storage.foldername(name))[1] = (select auth.uid())::text
   );
 
 create policy invoices_storage_insert_own on storage.objects
   for insert with check (
     bucket_id = 'invoices'
-    and (storage.foldername(name))[1] = auth.uid()::text
+    and (storage.foldername(name))[1] = (select auth.uid())::text
   );
 
 create policy invoices_storage_update_own on storage.objects
   for update using (
     bucket_id = 'invoices'
-    and (storage.foldername(name))[1] = auth.uid()::text
+    and (storage.foldername(name))[1] = (select auth.uid())::text
   ) with check (
     bucket_id = 'invoices'
-    and (storage.foldername(name))[1] = auth.uid()::text
+    and (storage.foldername(name))[1] = (select auth.uid())::text
   );
 
 create policy invoices_storage_delete_own on storage.objects
   for delete using (
     bucket_id = 'invoices'
-    and (storage.foldername(name))[1] = auth.uid()::text
+    and (storage.foldername(name))[1] = (select auth.uid())::text
   );
 ```
+
+> As with the table policies above, the storage policies call
+> `(select auth.uid())` so the auth function is evaluated once per query rather
+> than per row (`auth_rls_initplan`).
 
 > The webhook/server uses the **service-role key** for trusted operations and is
 > not subject to these RLS policies; keep that key server-only.
@@ -551,3 +572,25 @@ invoices   1───* invoice_items       (invoice_items.invoice_id, ON DELETE 
   ownership (`auth.uid()`).
 - **Triggers** auto-create a profile on signup and maintain `updated_at`.
 - **Indexes** cover all foreign keys and common list filters/sorts.
+
+---
+
+## 11. Advisor Refinements & Live-DB Divergence
+
+This doc has been updated to fold in the hardening recommendations surfaced by
+Supabase's database advisors after the initial migration:
+
+1. **`auth_rls_initplan`** — all RLS table policies (section 7) and storage
+   policies (section 8) call `(select auth.uid())` instead of a bare
+   `auth.uid()`.
+2. **`function_search_path_mutable`** — `set_updated_at()` (section 6.2) now sets
+   `search_path = public`, matching the other functions.
+3. **`security_definer_function_executable`** — `handle_new_user()` (section 6.1)
+   has its execute privilege revoked from `public`, `anon`, and `authenticated`
+   so it can only run via the auth trigger.
+
+> **⚠️ Live-DB divergence:** the live Supabase project was applied with the
+> **original (pre-refinement)** SQL from the prior version of this doc. The
+> refinements above are reflected **in this document only** — they have **not**
+> yet been applied to the live database. A follow-up migration is needed to sync
+> the live schema with this doc.

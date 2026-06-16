@@ -1,0 +1,5 @@
+---
+alwaysApply: true
+---
+
+whenever i ask you to do something related to supabase you must know that you have MCP connection to my supabase project. Do not ever leave sql or any other actions to users to complete, you do it yourself.. only let user know when you can not accomplish certain task using MCP.
