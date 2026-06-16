@@ -4,7 +4,7 @@ import type { ProfileSenderDetails } from "@/lib/profile/types"
 import { createClient } from "@/utils/supabase/server"
 
 const profileSelect =
-  "id, full_name, company_name, email, address, vat_id, website" as const
+  "id, full_name, company_name, email, address, vat_id, website, stripe_account_id, charges_enabled" as const
 
 export async function getProfile(
   userId: string

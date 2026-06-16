@@ -6,11 +6,27 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { ProfileForm } from "@/components/settings/profile-form"
+import { StripeOnboardingCard } from "@/components/settings/stripe-onboarding-card"
+import { refreshStripeAccountStatus } from "@/app/(app)/settings/stripe-actions"
 import { getProfile } from "@/lib/profile/queries"
 import { requireAuth } from "@/lib/auth/session"
 
-export default async function ProfileSettingsPage() {
+type ProfileSettingsPageProps = {
+  searchParams: Promise<{
+    stripe?: string
+  }>
+}
+
+export default async function ProfileSettingsPage({
+  searchParams,
+}: ProfileSettingsPageProps) {
   const user = await requireAuth()
+  const params = await searchParams
+
+  if (params.stripe === "return" || params.stripe === "refresh") {
+    await refreshStripeAccountStatus()
+  }
+
   const profile = await getProfile(user.id)
 
   return (
@@ -39,6 +55,11 @@ export default async function ProfileSettingsPage() {
           />
         </CardContent>
       </Card>
+
+      <StripeOnboardingCard
+        chargesEnabled={Boolean(profile?.charges_enabled)}
+        hasAccount={Boolean(profile?.stripe_account_id)}
+      />
     </div>
   )
 }

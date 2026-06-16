@@ -80,6 +80,22 @@ export async function getClientsCount(search?: string): Promise<number> {
   return count ?? 0
 }
 
+export async function getAllClientsForSelect(): Promise<ClientListItem[]> {
+  const cookieStore = await cookies()
+  const supabase = createClient(cookieStore)
+
+  const { data, error } = await supabase
+    .from("clients")
+    .select(clientSelect)
+    .order("created_at", { ascending: false })
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  return data ?? []
+}
+
 export async function getClient(id: string): Promise<ClientListItem | null> {
   const cookieStore = await cookies()
   const supabase = createClient(cookieStore)

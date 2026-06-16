@@ -15,7 +15,15 @@ export type Profile = {
 
 export type ProfileSenderDetails = Pick<
   Profile,
-  "id" | "full_name" | "company_name" | "email" | "address" | "vat_id" | "website"
+  | "id"
+  | "full_name"
+  | "company_name"
+  | "email"
+  | "address"
+  | "vat_id"
+  | "website"
+  | "stripe_account_id"
+  | "charges_enabled"
 >
 
 export function isProfileIncomplete(

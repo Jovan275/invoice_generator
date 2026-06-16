@@ -10,6 +10,7 @@ export type SendEmailParams = {
   html: string;
   from?: string;
   cc?: string | string[];
+  bcc?: string | string[];
   replyTo?: string | string[];
   attachments?: Attachment[];
 };
@@ -20,6 +21,7 @@ export const sendEmail = async ({
   html,
   from,
   cc,
+  bcc,
   replyTo,
   attachments,
 }: SendEmailParams): Promise<CreateEmailResponse> => {
@@ -31,6 +33,7 @@ export const sendEmail = async ({
     subject,
     html,
     cc,
+    bcc,
     replyTo,
     attachments,
   });
