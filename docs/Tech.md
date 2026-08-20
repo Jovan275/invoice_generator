@@ -341,21 +341,66 @@ docs/
 
 ## 7. Environment Variables
 
-| Variable | Scope | Purpose |
-| --- | --- | --- |
-| `NEXT_PUBLIC_SUPABASE_URL` | public | Supabase project URL (used by existing helpers) |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | public | Supabase anon/publishable key (used by existing helpers) |
-| `SUPABASE_SERVICE_ROLE_KEY` | server | Service-role key for webhook DB writes (bypasses RLS; never expose) |
-| `STRIPE_SECRET_KEY` | server | Stripe API calls (accounts, sessions) |
-| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | public | Stripe.js on the client |
-| `STRIPE_WEBHOOK_SECRET` | server | Verify incoming webhook signatures |
-| `STRIPE_CONNECT_CLIENT_ID` | server | Stripe Connect (Express) client id |
-| `RESEND_API_KEY` | server | Resend authentication (used by existing helper) |
-| `RESEND_FROM_EMAIL` | server | Verified sender address (used by existing helper) |
-| `NEXT_PUBLIC_APP_URL` | public | App base URL for redirects, links, onboarding return/refresh URLs |
+| Variable | Scope | Sensitive on Vercel? | Purpose |
+| --- | --- | --- | --- |
+| `NEXT_PUBLIC_SUPABASE_URL` | public | no | Supabase project URL (used by existing helpers) |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | public | no | Supabase anon/publishable key (used by existing helpers) |
+| `SUPABASE_SERVICE_ROLE_KEY` | server | **yes** | Service-role key for webhook DB writes (bypasses RLS; never expose) |
+| `STRIPE_SECRET_KEY` | server | **yes** | Stripe API calls (accounts, sessions) |
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | public | no | Stripe.js on the client |
+| `STRIPE_WEBHOOK_SECRET` | server | **yes** | Verify incoming webhook signatures |
+| `STRIPE_CONNECT_CLIENT_ID` | server | **yes** | Stripe Connect (Express) client id |
+| `RESEND_API_KEY` | server | **yes** | Resend authentication (used by existing helper) |
+| `RESEND_FROM_EMAIL` | server | no | Verified sender address (used by existing helper) |
+| `NEXT_PUBLIC_APP_URL` | public | no | App base URL for redirects, links, onboarding return/refresh URLs |
 
-> Keep a `.env.example` documenting these. Public (`NEXT_PUBLIC_*`) values are
-> exposed to the browser; everything else must remain server-only.
+> Keep a committed `.env.example` documenting these. Copy it to `.env.local` for
+> local development. Public (`NEXT_PUBLIC_*`) values are embedded in the client
+> bundle at **build time** — changing them on Vercel requires a **redeploy**
+> (or trigger a new build) to take effect. Everything without the
+> `NEXT_PUBLIC_` prefix stays server-only.
+
+### Blast radius (if leaked)
+
+| Key type | Impact |
+| --- | --- |
+| `SUPABASE_SERVICE_ROLE_KEY` | Full database access, bypasses RLS — rotate immediately |
+| `STRIPE_SECRET_KEY` | Create charges, refunds, account changes — rotate immediately |
+| `STRIPE_WEBHOOK_SECRET` | Forge webhook events to mark invoices paid — rotate and update endpoint |
+| `RESEND_API_KEY` | Send email as your domain — rotate immediately |
+| `STRIPE_CONNECT_CLIENT_ID` | Lower risk (public in OAuth flows) but still server-only here |
+| `NEXT_PUBLIC_*` | Expected in browser; limited to publishable/anon scopes |
+
+### Bundle leak check
+
+After `npm run build`, scan production output for secret patterns:
+
+```bash
+npm run audit:secrets
+```
+
+This greps `.next/static` (client bundle) for secret patterns including
+`service_role`, and `.next/server` (app code only, excluding vendor source maps)
+for `sk_live_*`, `sk_test_*`, `whsec_*`, Resend-style `re_*` tokens, and JWT
+shapes. Fail the check if any match — server-only keys must never appear in
+client bundles.
+
+### Vercel deployment checklist
+
+1. **Project → Settings → Environment Variables** — add every variable above.
+2. Mark **Sensitive** (encrypted, hidden in UI) for: `SUPABASE_SERVICE_ROLE_KEY`,
+   `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_CONNECT_CLIENT_ID`,
+   `RESEND_API_KEY`.
+3. Set `NEXT_PUBLIC_APP_URL` to the production URL (e.g.
+   `https://your-app.vercel.app`) for **Production**; keep
+   `http://localhost:3000` for **Preview/Development** if desired.
+4. After adding or changing any `NEXT_PUBLIC_*` var, **redeploy** so the new
+   value is baked into the client bundle.
+5. Configure Stripe webhook endpoint:
+   `https://<your-domain>/api/stripe/webhook` — paste the signing secret into
+   `STRIPE_WEBHOOK_SECRET`.
+6. Run `npm run audit:secrets` locally before release to confirm no server keys
+   leaked into `.next/`.
 
 ---
 
