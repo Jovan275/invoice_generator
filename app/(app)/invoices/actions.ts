@@ -18,10 +18,13 @@ import {
 } from "@/lib/invoices/pdf"
 import {
   invoiceFormSchema,
+  normalizeInvoiceFormValues,
   sendInvoiceSchema,
   type InvoiceFormValues,
   type SendInvoiceFormValues,
 } from "@/lib/invoices/schema"
+import { sanitizeEmail, sanitizeHtmlEmail } from "@/lib/sanitize"
+import { getFirstError } from "@/lib/validation"
 import { getProfile } from "@/lib/profile/queries"
 import { createClient as createSupabaseClient } from "@/utils/supabase/server"
 import { createInvoiceCheckoutSession } from "@/utils/stripe/checkout"
@@ -214,9 +217,7 @@ export async function createInvoice(
   const parsed = invoiceFormSchema.safeParse(values)
 
   if (!parsed.success) {
-    return {
-      error: parsed.error.issues[0]?.message ?? "Invalid invoice details.",
-    }
+    return { error: getFirstError(parsed.error, "Invalid invoice details.") }
   }
 
   const supabase = await getSupabaseClient()
@@ -229,20 +230,21 @@ export async function createInvoice(
     return { error: "You must be signed in to create an invoice." }
   }
 
+  const data = normalizeInvoiceFormValues(parsed.data)
   const profile = await getProfile(user.id)
 
   if (!profile) {
     return { error: "Profile not found." }
   }
 
-  const client = await getOwnedClient(parsed.data.client_id, user.id)
+  const client = await getOwnedClient(data.client_id, user.id)
 
   if (!client) {
     return { error: "Selected client was not found." }
   }
 
-  const totals = calculateInvoiceTotals(parsed.data.line_items)
-  const invoiceYear = new Date(parsed.data.invoice_date).getFullYear()
+  const totals = calculateInvoiceTotals(data.line_items)
+  const invoiceYear = new Date(data.invoice_date).getFullYear()
 
   const { data: invoiceNumber, error: numberError } = await supabase.rpc(
     "next_invoice_number",
@@ -261,10 +263,10 @@ export async function createInvoice(
       client_id: client.id,
       sender_snapshot: toSenderSnapshot(profile),
       client_snapshot: toClientSnapshot(client),
-      invoice_date: parsed.data.invoice_date,
-      due_date: parsed.data.due_date,
-      currency: parsed.data.currency,
-      comments: parsed.data.comments || null,
+      invoice_date: data.invoice_date,
+      due_date: data.due_date,
+      currency: data.currency,
+      comments: data.comments || null,
       subtotal: totals.subtotal,
       tax: totals.tax,
       total: totals.total,
@@ -277,7 +279,7 @@ export async function createInvoice(
     return { error: "Could not create invoice." }
   }
 
-  const itemsPayload = parsed.data.line_items.map((item, index) => ({
+  const itemsPayload = data.line_items.map((item, index) => ({
     invoice_id: invoice.id,
     description: item.description,
     quantity: item.quantity,
@@ -310,7 +312,7 @@ export async function createInvoice(
           id: invoice.id,
           invoice_number: invoiceNumber,
           total: totals.total,
-          currency: parsed.data.currency,
+          currency: data.currency,
           stripe_checkout_session_id: null,
         },
         profile.stripe_account_id
@@ -333,9 +335,7 @@ export async function updateInvoice(
   const parsed = invoiceFormSchema.safeParse(values)
 
   if (!parsed.success) {
-    return {
-      error: parsed.error.issues[0]?.message ?? "Invalid invoice details.",
-    }
+    return { error: getFirstError(parsed.error, "Invalid invoice details.") }
   }
 
   const supabase = await getSupabaseClient()
@@ -348,6 +348,7 @@ export async function updateInvoice(
     return { error: "You must be signed in to update an invoice." }
   }
 
+  const data = normalizeInvoiceFormValues(parsed.data)
   const existing = await getOwnedInvoice(id, user.id)
 
   if (!existing) {
@@ -358,13 +359,13 @@ export async function updateInvoice(
     return { error: "Paid invoices cannot be edited." }
   }
 
-  const client = await getOwnedClient(parsed.data.client_id, user.id)
+  const client = await getOwnedClient(data.client_id, user.id)
 
   if (!client) {
     return { error: "Selected client was not found." }
   }
 
-  const totals = calculateInvoiceTotals(parsed.data.line_items)
+  const totals = calculateInvoiceTotals(data.line_items)
   const totalChanged = Number(existing.total) !== totals.total
   const profile = await getProfile(user.id)
 
@@ -373,10 +374,10 @@ export async function updateInvoice(
     .update({
       client_id: client.id,
       client_snapshot: toClientSnapshot(client),
-      invoice_date: parsed.data.invoice_date,
-      due_date: parsed.data.due_date,
-      currency: parsed.data.currency,
-      comments: parsed.data.comments || null,
+      invoice_date: data.invoice_date,
+      due_date: data.due_date,
+      currency: data.currency,
+      comments: data.comments || null,
       subtotal: totals.subtotal,
       tax: totals.tax,
       total: totals.total,
@@ -396,7 +397,7 @@ export async function updateInvoice(
     return { error: "Could not update line items." }
   }
 
-  const itemsPayload = parsed.data.line_items.map((item, index) => ({
+  const itemsPayload = data.line_items.map((item, index) => ({
     invoice_id: id,
     description: item.description,
     quantity: item.quantity,
@@ -431,7 +432,7 @@ export async function updateInvoice(
           id,
           invoice_number: existing.invoice_number,
           total: totals.total,
-          currency: parsed.data.currency,
+          currency: data.currency,
           stripe_checkout_session_id: existing.stripe_checkout_session_id,
         },
         profile.stripe_account_id
@@ -569,10 +570,11 @@ export async function sendInvoice(
   const parsed = sendInvoiceSchema.safeParse(values)
 
   if (!parsed.success) {
-    return {
-      error: parsed.error.issues[0]?.message ?? "Invalid send details.",
-    }
+    return { error: getFirstError(parsed.error, "Invalid send details.") }
   }
+
+  const recipientEmail = sanitizeEmail(parsed.data.recipient_email)
+  const messageHtml = sanitizeHtmlEmail(parsed.data.message_html)
 
   const supabase = await getSupabaseClient()
   const {
@@ -628,7 +630,7 @@ export async function sendInvoice(
     profile.email?.trim() || user.email || undefined
   const bcc = user.email ?? undefined
 
-  let html = parsed.data.message_html
+  let html = messageHtml
   if (paymentUrl) {
     html = html.replace(
       "{{PAYMENT_LINK}}",
@@ -661,7 +663,7 @@ export async function sendInvoice(
 
   try {
     await sendEmail({
-      to: parsed.data.recipient_email,
+      to: recipientEmail,
       subject,
       html,
       bcc,

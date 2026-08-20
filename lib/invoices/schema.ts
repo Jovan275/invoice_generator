@@ -2,6 +2,7 @@ import { z } from "zod"
 
 import { CURRENCIES } from "@/lib/money"
 import type { InvoiceUnitType } from "@/lib/database.types"
+import { sanitize } from "@/lib/sanitize"
 
 function numericField(message: string) {
   return z
@@ -11,7 +12,11 @@ function numericField(message: string) {
 }
 
 export const lineItemSchema = z.object({
-  description: z.string().trim().min(1, "Description is required."),
+  description: z
+    .string()
+    .trim()
+    .min(1, "Description is required.")
+    .max(500, "Description must be 500 characters or fewer."),
   quantity: numericField("Quantity must be a number.").pipe(
     z.number().positive("Quantity must be greater than 0.")
   ),
@@ -30,7 +35,10 @@ export const invoiceFormSchema = z
     invoice_date: z.string().min(1, "Invoice date is required."),
     due_date: z.string().min(1, "Due date is required."),
     currency: z.enum(CURRENCIES),
-    comments: z.string().trim(),
+    comments: z
+      .string()
+      .trim()
+      .max(2000, "Comments must be 2000 characters or fewer."),
     line_items: z.array(lineItemSchema).min(1, "Add at least one line item."),
   })
   .refine((data) => data.due_date >= data.invoice_date, {
@@ -64,11 +72,28 @@ export const sendInvoiceSchema = z.object({
     .string()
     .trim()
     .min(1, "Recipient email is required.")
-    .email("Enter a valid email address."),
-  message_html: z.string().trim().min(1, "Message is required."),
+    .max(254, "Email must be 254 characters or fewer.")
+    .email("Enter a valid email address.")
+    .toLowerCase(),
+  message_html: z
+    .string()
+    .trim()
+    .min(1, "Message is required.")
+    .max(10000, "Message must be 10000 characters or fewer."),
 })
 
 export type SendInvoiceFormValues = z.infer<typeof sendInvoiceSchema>
+
+export function normalizeInvoiceFormValues(values: InvoiceFormValues): InvoiceFormValues {
+  return {
+    ...values,
+    comments: values.comments ? sanitize(values.comments) : values.comments,
+    line_items: values.line_items.map((item) => ({
+      ...item,
+      description: sanitize(item.description),
+    })),
+  }
+}
 
 export function defaultLineItem(): LineItemFormValues {
   return {
