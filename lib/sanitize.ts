@@ -31,6 +31,11 @@ export function sanitizeHtmlEmail(input: string): string {
   return xss(input, emailHtmlOptions).trim()
 }
 
+/** Strips CR/LF from email header values to prevent header injection. */
+export function sanitizeHeaderValue(value: string): string {
+  return value.replace(/[\r\n]/g, "")
+}
+
 export function sanitizeObject<T extends Record<string, unknown>>(obj: T): T {
   const result = { ...obj } as Record<string, unknown>
 

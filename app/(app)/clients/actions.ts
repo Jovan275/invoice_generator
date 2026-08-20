@@ -156,6 +156,7 @@ export async function updateClient(
     .from("clients")
     .update(payload)
     .eq("id", id)
+    .eq("user_id", user.id)
     .select("id")
     .maybeSingle()
 
@@ -204,6 +205,7 @@ export async function deleteClient(id: string): Promise<ClientActionResult> {
     .from("clients")
     .delete()
     .eq("id", id)
+    .eq("user_id", user.id)
     .select("id")
     .maybeSingle()
 

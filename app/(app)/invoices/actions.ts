@@ -24,6 +24,7 @@ import {
   type SendInvoiceFormValues,
 } from "@/lib/invoices/schema"
 import { sanitizeEmail, sanitizeHtmlEmail } from "@/lib/sanitize"
+import { checkSendInvoiceRateLimit } from "@/lib/rate-limit/send-invoice"
 import { getFirstError } from "@/lib/validation"
 import { getProfile } from "@/lib/profile/queries"
 import { createClient as createSupabaseClient } from "@/utils/supabase/server"
@@ -114,7 +115,8 @@ async function syncCheckoutSession(
     currency: string
     stripe_checkout_session_id: string | null
   },
-  stripeAccountId: string
+  stripeAccountId: string,
+  userId: string
 ) {
   const supabase = await getSupabaseClient()
 
@@ -141,6 +143,7 @@ async function syncCheckoutSession(
       stripe_payment_status: session.status,
     })
     .eq("id", invoice.id)
+    .eq("user_id", userId)
 
   if (error) {
     throw new Error(error.message)
@@ -203,6 +206,7 @@ async function regeneratePdf(invoiceId: string, userId: string) {
       pdf_storage_path: storagePath,
     })
     .eq("id", invoiceId)
+    .eq("user_id", userId)
 
   if (error) {
     throw new Error(error.message)
@@ -315,7 +319,8 @@ export async function createInvoice(
           currency: data.currency,
           stripe_checkout_session_id: null,
         },
-        profile.stripe_account_id
+        profile.stripe_account_id,
+        user.id
       )
     } catch {
       // Payment link can be created later when sending.
@@ -383,6 +388,7 @@ export async function updateInvoice(
       total: totals.total,
     })
     .eq("id", id)
+    .eq("user_id", user.id)
 
   if (updateError) {
     return { error: "Could not update invoice." }
@@ -435,7 +441,8 @@ export async function updateInvoice(
           currency: data.currency,
           stripe_checkout_session_id: existing.stripe_checkout_session_id,
         },
-        profile.stripe_account_id
+        profile.stripe_account_id,
+        user.id
       )
     } catch {
       return { error: "Could not refresh payment link." }
@@ -496,7 +503,11 @@ export async function deleteInvoice(id: string): Promise<InvoiceActionResult> {
     }
   }
 
-  const { error } = await supabase.from("invoices").delete().eq("id", id)
+  const { error } = await supabase
+    .from("invoices")
+    .delete()
+    .eq("id", id)
+    .eq("user_id", user.id)
 
   if (error) {
     return { error: "Could not delete invoice." }
@@ -551,6 +562,7 @@ export async function markInvoicePaid(
       stripe_payment_status: "paid",
     })
     .eq("id", id)
+    .eq("user_id", user.id)
 
   if (error) {
     return { error: "Could not mark invoice as paid." }
@@ -617,11 +629,18 @@ export async function sendInvoice(
           currency: existing.currency,
           stripe_checkout_session_id: existing.stripe_checkout_session_id,
         },
-        profile.stripe_account_id
+        profile.stripe_account_id,
+        user.id
       )
     } catch {
       return { error: "Could not create payment link." }
     }
+  }
+
+  const rateLimit = await checkSendInvoiceRateLimit(user.id)
+
+  if (!rateLimit.allowed) {
+    return { error: rateLimit.error }
   }
 
   const sender = existing.sender_snapshot as PartySnapshot
@@ -683,6 +702,7 @@ export async function sendInvoice(
     .from("invoices")
     .update({ last_sent_at: new Date().toISOString() })
     .eq("id", id)
+    .eq("user_id", user.id)
 
   if (updateError) {
     return { error: "Email sent, but could not update send timestamp." }
