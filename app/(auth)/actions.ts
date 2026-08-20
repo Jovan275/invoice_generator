@@ -78,7 +78,7 @@ export async function signUp(
       return { error: "An account with this email already exists." }
     }
 
-    return { error: error.message }
+    return { error: "Could not create account. Please try again." }
   }
 
   await supabase.auth.signOut()
@@ -103,7 +103,9 @@ export async function requestPasswordReset(
   })
 
   if (error) {
-    return { error: error.message }
+    return {
+      error: "Could not send password reset email. Please try again.",
+    }
   }
 
   return {
@@ -140,7 +142,7 @@ export async function updatePassword(
   })
 
   if (error) {
-    return { error: error.message }
+    return { error: "Could not update password. Please try again." }
   }
 
   await supabase.auth.signOut()

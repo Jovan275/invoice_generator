@@ -3,6 +3,7 @@ import { z } from "zod"
 import { CURRENCIES } from "@/lib/money"
 import type { InvoiceUnitType } from "@/lib/database.types"
 import { sanitize } from "@/lib/sanitize"
+import { noCrlfPattern } from "@/lib/validation"
 
 function numericField(message: string) {
   return z
@@ -73,6 +74,7 @@ export const sendInvoiceSchema = z.object({
     .trim()
     .min(1, "Recipient email is required.")
     .max(254, "Email must be 254 characters or fewer.")
+    .regex(noCrlfPattern, "Email contains invalid characters.")
     .email("Enter a valid email address.")
     .toLowerCase(),
   message_html: z

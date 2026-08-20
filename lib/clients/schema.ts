@@ -1,14 +1,14 @@
 import { z } from "zod"
 
 import { sanitize, sanitizeEmail } from "@/lib/sanitize"
-import { optionalTextField } from "@/lib/validation"
+import { noCrlfOptionalTextField, optionalTextField } from "@/lib/validation"
 
 const vatIdPattern = /^[A-Za-z0-9.\-/\s]+$/
 
 export const clientFormSchema = z
   .object({
-    full_name: optionalTextField(200),
-    company_name: optionalTextField(200),
+    full_name: noCrlfOptionalTextField(200),
+    company_name: noCrlfOptionalTextField(200),
     email: z
       .string()
       .min(1, "Email is required.")
