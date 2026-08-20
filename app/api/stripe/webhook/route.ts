@@ -3,6 +3,7 @@ import "server-only"
 import { NextResponse } from "next/server"
 import Stripe from "stripe"
 
+import { toStripeAmount } from "@/lib/money"
 import { createAdminClient } from "@/utils/supabase/admin"
 import { getStripeClient } from "@/utils/stripe/client"
 import { isChargesEnabled } from "@/utils/stripe/connect"
@@ -42,14 +43,45 @@ export async function POST(request: Request) {
     const invoiceId = session.metadata?.invoice_id
 
     if (invoiceId) {
-      await admin
+      const { data: invoice } = await admin
         .from("invoices")
-        .update({
-          status: "paid",
-          stripe_payment_status: session.payment_status,
-          stripe_payment_link_url: null,
-        })
+        .select(
+          "id, status, stripe_checkout_session_id, total, currency, user_id"
+        )
         .eq("id", invoiceId)
+        .maybeSingle()
+
+      const { data: profile } = invoice
+        ? await admin
+            .from("profiles")
+            .select("stripe_account_id")
+            .eq("id", invoice.user_id)
+            .maybeSingle()
+        : { data: null }
+
+      const expectedAmount =
+        invoice != null
+          ? toStripeAmount(Number(invoice.total), invoice.currency)
+          : null
+
+      const isValidCheckout =
+        invoice != null &&
+        invoice.status === "not_paid" &&
+        session.id === invoice.stripe_checkout_session_id &&
+        session.amount_total === expectedAmount &&
+        profile?.stripe_account_id != null &&
+        event.account === profile.stripe_account_id
+
+      if (isValidCheckout) {
+        await admin
+          .from("invoices")
+          .update({
+            status: "paid",
+            stripe_payment_status: session.payment_status,
+            stripe_payment_link_url: null,
+          })
+          .eq("id", invoiceId)
+      }
     }
   }
 

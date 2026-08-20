@@ -20,6 +20,23 @@ async function getSupabaseClient() {
   return createSupabaseClient(cookieStore)
 }
 
+async function getOwnedClient(id: string, userId: string) {
+  const supabase = await getSupabaseClient()
+
+  const { data, error } = await supabase
+    .from("clients")
+    .select("id")
+    .eq("id", id)
+    .eq("user_id", userId)
+    .maybeSingle()
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  return data
+}
+
 async function findDuplicateClientEmail(
   email: string,
   excludeId?: string
@@ -116,6 +133,18 @@ export async function updateClient(
 
   const payload = normalizeClientFormValues(parsed.data)
 
+  let existing
+
+  try {
+    existing = await getOwnedClient(id, user.id)
+  } catch {
+    return { error: "Could not verify client. Please try again." }
+  }
+
+  if (!existing) {
+    return { error: "Client not found." }
+  }
+
   try {
     const isDuplicate = await findDuplicateClientEmail(payload.email, id)
 
@@ -160,6 +189,18 @@ export async function deleteClient(id: string): Promise<ClientActionResult> {
 
   if (authError || !user) {
     return { error: "You must be signed in to delete a client." }
+  }
+
+  let existing
+
+  try {
+    existing = await getOwnedClient(id, user.id)
+  } catch {
+    return { error: "Could not verify client. Please try again." }
+  }
+
+  if (!existing) {
+    return { error: "Client not found." }
   }
 
   const { data, error } = await supabase
