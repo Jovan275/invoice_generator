@@ -8,6 +8,7 @@ import {
   normalizeClientFormValues,
   type ClientFormValues,
 } from "@/lib/clients/schema"
+import { getFirstError } from "@/lib/validation"
 import { createClient as createSupabaseClient } from "@/utils/supabase/server"
 
 export type ClientActionResult = {
@@ -64,9 +65,7 @@ export async function createClient(
   const parsed = clientFormSchema.safeParse(values)
 
   if (!parsed.success) {
-    return {
-      error: parsed.error.issues[0]?.message ?? "Invalid client details.",
-    }
+    return { error: getFirstError(parsed.error, "Invalid client details.") }
   }
 
   const supabase = await getSupabaseClient()
@@ -116,9 +115,7 @@ export async function updateClient(
   const parsed = clientFormSchema.safeParse(values)
 
   if (!parsed.success) {
-    return {
-      error: parsed.error.issues[0]?.message ?? "Invalid client details.",
-    }
+    return { error: getFirstError(parsed.error, "Invalid client details.") }
   }
 
   const supabase = await getSupabaseClient()

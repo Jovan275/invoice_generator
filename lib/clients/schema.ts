@@ -1,12 +1,7 @@
 import { z } from "zod"
 
-function optionalTextField(maxLength: number) {
-  return z
-    .string()
-    .max(maxLength, `Must be ${maxLength} characters or fewer.`)
-    .optional()
-    .or(z.literal(""))
-}
+import { sanitize, sanitizeEmail } from "@/lib/sanitize"
+import { optionalTextField } from "@/lib/validation"
 
 const vatIdPattern = /^[A-Za-z0-9.\-/\s]+$/
 
@@ -17,7 +12,9 @@ export const clientFormSchema = z
     email: z
       .string()
       .min(1, "Email is required.")
-      .email("Please enter a valid email address."),
+      .max(254, "Email must be 254 characters or fewer.")
+      .email("Please enter a valid email address.")
+      .toLowerCase(),
     address: optionalTextField(2000),
     vat_id: optionalTextField(100).refine(
       (value) => !value?.trim() || vatIdPattern.test(value.trim()),
@@ -45,13 +42,13 @@ export type ClientFormValues = z.infer<typeof clientFormSchema>
 export function normalizeClientFormValues(values: ClientFormValues) {
   const trimOrNull = (value: string | undefined) => {
     const trimmed = value?.trim()
-    return trimmed ? trimmed : null
+    return trimmed ? sanitize(trimmed) : null
   }
 
   return {
     full_name: trimOrNull(values.full_name),
     company_name: trimOrNull(values.company_name),
-    email: values.email.trim().toLowerCase(),
+    email: sanitizeEmail(values.email),
     address: trimOrNull(values.address),
     vat_id: trimOrNull(values.vat_id),
   }
